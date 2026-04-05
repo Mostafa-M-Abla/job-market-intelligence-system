@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+	  "Bash(*)",
+      "Bash(python*)",
+      "Bash(pip*)",
+      "Bash(pytest*)",
+      "Bash(python -c \"from langgraph.checkpoint.sqlite import SqliteSaver; help\\(SqliteSaver\\)\")",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "Bash(ls D:/git/job-market-intelligence-system/*.py)",
+      "Bash(ls:*)"
+    ]
+  },
+  "defaultMode": "bypassPermissions"
+}
