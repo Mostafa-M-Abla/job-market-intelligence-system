@@ -70,7 +70,7 @@ class HTMLReportSaverTool(BaseTool):
         """
         try:
             # Build the output directory path and create it if needed.
-            out_dir = Path("outputs") / session_id
+            out_dir = Path(os.getenv("OUTPUTS_DIR", "outputs")) / session_id
             out_dir.mkdir(parents=True, exist_ok=True)
 
             # Timestamp the filename so repeated reports don't overwrite each other.

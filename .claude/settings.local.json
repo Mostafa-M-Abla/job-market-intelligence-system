@@ -1,14 +1,24 @@
 {
   "permissions": {
     "allow": [
-	  "Bash(*)",
+      "Bash(*)",
       "Bash(python*)",
       "Bash(pip*)",
       "Bash(pytest*)",
       "Bash(python -c \"from langgraph.checkpoint.sqlite import SqliteSaver; help\\(SqliteSaver\\)\")",
       "Bash(set PYTHONIOENCODING=utf-8)",
       "Bash(ls D:/git/job-market-intelligence-system/*.py)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(xargs grep:*)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_graph_routing.py -v)",
+      "Bash(.venv/Scripts/pip.exe install:*)",
+      "Bash(.venv/Scripts/python.exe -c \"from api.main import app; print\\('FastAPI app loaded OK:', app.title\\)\")",
+      "Bash(.venv/Scripts/uvicorn.exe api.main:app --port 8000 --log-level info)",
+      "Bash(curl -s http://localhost:8000/docs)",
+      "Bash(curl -s -X POST http://localhost:8000/api/chat -H 'Content-Type: application/json' -d '{\"message\": \"What is the difference between LangGraph and LangChain?\"}' --no-buffer)",
+      "Bash(taskkill /F /IM uvicorn.exe)",
+      "Bash(taskkill /F /FI \"IMAGENAME eq uvicorn.exe\")",
+      "Bash(taskkill /F /FI \"IMAGENAME eq python.exe\" /FI \"WINDOWTITLE eq *uvicorn*\")"
     ]
   },
   "defaultMode": "bypassPermissions"

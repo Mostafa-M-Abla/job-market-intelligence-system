@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.db-wal
+*.db-shm
+outputs/
+.env
+.git/
+.idea/
+tests/
+run_tests.py
+Resume.pdf
+evaluation/

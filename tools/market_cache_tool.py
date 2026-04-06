@@ -34,17 +34,14 @@ Two separate LangChain tools handle reads and writes:
 
 import hashlib
 import json
-import os
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from config import CACHE_TTL_DAYS
 from db.connection import get_connection
-
-# How many days a cached analysis stays valid (overridable via env var).
-CACHE_TTL_DAYS = int(os.getenv("CACHE_TTL_DAYS", "7"))
 
 
 def build_cache_key(job_titles: list[str], country: str) -> str:

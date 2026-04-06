@@ -35,6 +35,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from config import DEFAULT_TOTAL_POSTS
 from graph.state import JobMarketState
 
 # The system prompt tells the LLM exactly how to classify messages and what
@@ -141,7 +142,7 @@ def intent_resolver(state: JobMarketState) -> dict:
         "country": result.country or state.get("country"),
         "focused_topic": result.focused_topic,
         # Use the value from state (set at graph invocation) or the env-var default.
-        "total_posts": state.get("total_posts") or int(os.getenv("DEFAULT_TOTAL_POSTS", "30")),
+        "total_posts": state.get("total_posts") or DEFAULT_TOTAL_POSTS,
         # Reset HITL flags at the start of every new turn so they don't bleed
         # over from a previous conversation turn.
         "params_confirmed": False,
