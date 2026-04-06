@@ -8,7 +8,7 @@ primary_region = "fra"
   PORT = "8080"
   DB_PATH = "/data/job_market.db"
   OUTPUTS_DIR = "/data/outputs"
-  CORS_ORIGINS = "*"  # Lock to the GitHub Pages origin in Phase 3
+  CORS_ORIGINS = "https://mostafaabla.com"
 
 [http_service]
   internal_port = 8080
