@@ -159,4 +159,11 @@ def intent_resolver(state: JobMarketState) -> dict:
         "params_confirmed": False,
         "report_confirmed": False,
         "cache_hit": False,
+        # Reset all output fields so a previous turn's results don't leak into
+        # the current turn's done event.  These will be repopulated by the
+        # relevant nodes if this turn's intent requires them.
+        "final_text_response": None,
+        "html_report_path": None,
+        "skill_gap_markdown": None,
+        "market_analysis_markdown": None,
     }
