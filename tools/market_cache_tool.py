@@ -125,6 +125,11 @@ class MarketCacheReadTool(BaseTool):
         if row is None:
             return None
 
+        # Treat entries with 0 job postings as a miss — they were written by a
+        # failed collection run and contain no useful data.
+        if (row["total_posts"] or 0) == 0:
+            return None
+
         # Deserialise JSON-stored fields back into Python objects.
         return {
             "cache_key": row["cache_key"],

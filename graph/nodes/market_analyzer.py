@@ -112,8 +112,10 @@ def market_analyzer(state: JobMarketState) -> dict:
 
     # Write the complete analysis to the DB cache so future requests with the
     # same parameters (same titles + country + day) can skip this pipeline.
+    # Skip caching if no postings were collected — an empty result is not
+    # useful and would permanently poison the cache for today's key.
     cache_key = state.get("cache_key")
-    if cache_key:
+    if cache_key and total > 0:
         write_tool = MarketCacheWriteTool()
         write_tool.run({
             "cache_key": cache_key,
