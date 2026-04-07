@@ -25,6 +25,7 @@ OUTPUTS written to state
 """
 
 import json
+import logging
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -33,6 +34,8 @@ from langchain_openai import ChatOpenAI
 from config import DISABLE_CACHE
 from graph.state import JobMarketState
 from tools.market_cache_tool import MarketCacheWriteTool
+
+logger = logging.getLogger(__name__)
 
 # System prompt that instructs the LLM how to aggregate the extracted data.
 # The {placeholders} are filled in at runtime with the actual job titles,
