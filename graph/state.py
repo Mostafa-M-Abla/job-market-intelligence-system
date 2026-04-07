@@ -141,3 +141,16 @@ class JobMarketState(TypedDict):
     # The SHA-256 key used to look up / store this analysis in the cache.
     # Built from sorted(job_titles) + country + today's date.
     cache_key: Optional[str]
+
+    # ── Multi-task planner ────────────────────────────────────────────────────
+
+    # Queue of remaining sub-tasks produced by the planner node.
+    # Each entry is a dict: {intent, job_titles, country, focused_topic, query_fragment}.
+    # task_dispatcher pops the first entry and sets the routing state fields.
+    # An empty list means all tasks for this turn have been completed.
+    task_queue: list[dict]
+
+    # Partial answers collected as each sub-task completes.
+    # answer_general, answer_focused, and html_report_generator each append one
+    # entry here.  The respond node combines them into a single final reply.
+    accumulated_responses: list[str]

@@ -1,28 +1,34 @@
 """
-graph/nodes/respond.py — Compose the final reply and persist conversation history.
+graph/nodes/respond.py — Combine all sub-task answers into the final reply.
 
 ROLE IN THE GRAPH
 -----------------
-This is the LAST node on every execution path.  All paths converge here:
-  - general_question  -> respond
-  - resume missing    -> respond
-  - focused answer    -> respond
-  - HTML report done  -> respond
-  - text analysis     -> respond
+This is the LAST node on every execution path.  All paths converge here once
+all tasks in task_queue have been completed.
 
-Its two responsibilities are:
-  1. Decide what text to show the user (based on which fields are populated).
-  2. Persist both the user's message and the AI's reply to conversation_history.
+With the multi-task planner, answer_general, answer_focused, and
+html_report_generator each append their result to accumulated_responses.
+This node reads that list and:
 
-For general_question intents, this node also makes the LLM call (the only node
-to do so for that path).  All other intents have their content already prepared
-in state fields by earlier nodes.
+  - Single entry (the common case): use it directly — no extra LLM call needed.
+  - Multiple entries: make one gpt-4o-mini call to merge them into a single
+    coherent reply with a clear heading per section.
+
+BACKWARDS COMPATIBILITY
+-----------------------
+If accumulated_responses is empty (edge case: a path that sets
+final_text_response directly without going through answer_focused, such as
+the "resume missing" or "PDF parse error" short-circuits), the node falls
+back to the old priority chain:
+  1. final_text_response
+  2. html_report_path  (builds a "report ready" message)
+  3. market_analysis_markdown  (raw fallback)
+  4. generic "I'm not sure" message
 
 OUTPUTS written to state
 ------------------------
-  messages : appends a new AIMessage with the final reply text.
-             The add_messages reducer in state.py ensures this appends to the
-             list rather than replacing it.
+  messages : appends a new AIMessage with the final combined reply.
+             The add_messages reducer ensures this appends to history.
 """
 
 import logging
@@ -32,111 +38,87 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from graph.state import JobMarketState
-
 logger = logging.getLogger(__name__)
 
+from graph.state import JobMarketState
 
-async def _build_general_answer(state: JobMarketState, config: RunnableConfig) -> str:
-    """
-    Answer a general question using the LLM's own knowledge (no market data).
+_COMBINE_SYSTEM_PROMPT = """You are a helpful assistant combining multiple answers into one response.
 
-    Uses gpt-4o-mini with streaming=True so tokens are observable by
-    astream_events() and stream through to the frontend in real time.
+You will receive several answers, each for a different part of a compound user question.
+Combine them into a single, well-structured reply:
+- Give each part a clear Markdown heading (##)
+- Keep each part's content exactly as provided — do not summarise or omit details
+- Add a single connecting sentence at the top if the parts are related, otherwise just present them sequentially
+- Do not add a preamble like "Here are your answers:" — go straight to the first heading"""
 
-    Args:
-        state: Current graph state.  Reads the last human message.
 
-    Returns:
-        The LLM's answer as a plain string.
-    """
-    last_human = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-        "",
-    )
+def _combine_responses(responses: list[str], config: RunnableConfig) -> str:
+    """Call gpt-4o-mini to merge multiple sub-task answers into one reply."""
     llm = ChatOpenAI(
         model="gpt-4o-mini",
-        temperature=0.3,
-        streaming=True,   # enables token-level streaming via astream_events
+        temperature=0,
+        streaming=True,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
-    logger.info("respond: calling LLM for general_question")
-    response = await llm.ainvoke([
-        SystemMessage(content=(
-            "You are a helpful AI assistant specialising in AI engineering, "
-            "machine learning, and career development. Answer clearly and concisely."
-        )),
-        HumanMessage(content=last_human),
+    numbered = "\n\n---\n\n".join(
+        f"### Part {i+1}\n\n{r}" for i, r in enumerate(responses)
+    )
+    logger.info("respond: combining %d responses via LLM", len(responses))
+    result = llm.invoke([
+        SystemMessage(content=_COMBINE_SYSTEM_PROMPT),
+        HumanMessage(content=f"Combine these answers:\n\n{numbered}"),
     ], config=config)
-    logger.info("respond: LLM call completed")
-    return response.content
+    return result.content
 
 
-async def respond(state: JobMarketState, config: RunnableConfig) -> dict:
+def respond(state: JobMarketState, config: RunnableConfig) -> dict:
     """
-    Determine the final reply and persist the conversation turn to the DB.
-
-    Reply selection priority (first match wins):
-      1. general_question intent       -> call the LLM for a direct answer
-      2. final_text_response is set    -> use it (covers focused answers,
-                                          resume missing prompts, text summaries)
-      3. html_report_path is set       -> build a "report ready" message with link
-      4. market_analysis_markdown set  -> surface the raw analysis as a fallback
-      5. none of the above             -> generic "I'm not sure" message
-
-    After deciding the reply, both the human turn and this AI reply are saved
-    to the conversation_history table so the full history is retrievable later
-    (e.g. via GET /api/chat/history in Phase 2).
+    Produce the final reply from all accumulated sub-task answers.
 
     Args:
-        state: Current graph state.  Reads intent, session_id, and several
-               output fields populated by earlier nodes.
+        state: Current graph state.
+        config: LangGraph RunnableConfig for streaming token observability.
 
     Returns:
         {"messages": [AIMessage(content=reply)]}
-        The add_messages reducer appends this to the existing messages list.
     """
-    intent = state.get("intent")
     session_id = state.get("session_id", "")
-    logger.info("respond: intent=%s session=%s", intent, session_id[:8] if session_id else "?")
+    logger.info("respond: finalising reply (session=%s)", session_id[:8] if session_id else "?")
 
-    # ── Determine the reply content ───────────────────────────────────────────
+    accumulated = list(state.get("accumulated_responses") or [])
 
-    if intent == "general_question":
-        # No market data was needed — answer directly from LLM knowledge.
-        reply = await _build_general_answer(state, config)
+    if len(accumulated) > 1:
+        # Multiple sub-task answers — combine into one structured reply
+        reply = _combine_responses(accumulated, config)
 
-    elif state.get("final_text_response"):
-        # This field is set by: answer_focused (text summaries),
-        # check_resume (missing resume prompt), and resume_parser (parse errors).
-        reply = state["final_text_response"]
-
-    elif state.get("html_report_path"):
-        # An HTML report was generated — tell the user and provide the link.
-        report_url = state["html_report_path"]
-        reply = (
-            f"Your report is ready!\n\n"
-            f"[Download / View Report]({report_url})\n\n"
-            f"The report covers:\n"
-            f"- Market analysis for {', '.join(state.get('job_titles') or [])}\n"
-            f"- Top skills, cloud platforms, and certifications\n"
-        )
-        if state.get("skill_gap_markdown"):
-            reply += "- Personalised skill gap analysis vs. your resume\n"
-
-    elif state.get("market_analysis_markdown"):
-        # Fallback: no specific output format was chosen, surface the raw markdown.
-        reply = state["market_analysis_markdown"]
+    elif len(accumulated) == 1:
+        # Single answer — use directly, no extra LLM call
+        reply = accumulated[0]
 
     else:
-        # Should not normally be reached — indicates an unexpected graph path.
-        reply = "I'm not sure how to respond. Please try rephrasing your question."
+        # Fallback: accumulated_responses is empty — use legacy priority chain
+        # (handles short-circuit paths like "resume missing" errors)
+        final_text = state.get("final_text_response")
+        html_path = state.get("html_report_path")
+        market_md = state.get("market_analysis_markdown")
 
-    # NOTE: Conversation history saving is intentionally skipped here.
-    # ConversationSaveTool opens a synchronous sqlite3 connection via
-    # asyncio.to_thread() which conflicts with AsyncSqliteSaver's aiosqlite
-    # connection, causing aget_state() to hang after the node completes.
-    # History saving will be handled separately (e.g. in a post-processing step).
+        if final_text:
+            reply = final_text
+        elif html_path:
+            titles_str = ", ".join(state.get("job_titles") or [])
+            reply = (
+                f"Your report is ready!\n\n"
+                f"[Download / View Report]({html_path})\n\n"
+                f"The report covers:\n"
+                f"- Market analysis for {titles_str}\n"
+                f"- Top skills, cloud platforms, and certifications\n"
+            )
+            if state.get("skill_gap_markdown"):
+                reply += "- Personalised skill gap analysis vs. your resume\n"
+        elif market_md:
+            reply = market_md
+        else:
+            reply = "I'm not sure how to respond. Please try rephrasing your question."
 
-    logger.info("respond: done")
+    logger.info("respond: done — %d chars", len(reply))
     return {"messages": [AIMessage(content=reply)]}

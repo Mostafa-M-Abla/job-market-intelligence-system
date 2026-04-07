@@ -65,4 +65,8 @@ def answer_focused(state: JobMarketState) -> dict:
     ])
 
     logger.info("answer_focused: done — %d chars", len(response.content))
-    return {"final_text_response": response.content}
+    existing = list(state.get("accumulated_responses") or [])
+    return {
+        "final_text_response": response.content,
+        "accumulated_responses": existing + [response.content],
+    }

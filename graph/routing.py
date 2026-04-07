@@ -19,36 +19,33 @@ from graph.session_store import has_resume
 from graph.state import JobMarketState
 
 
-# ── After intent_resolver ──────────────────────────────────────────────────────
+# ── After task_dispatcher ─────────────────────────────────────────────────────
 
 def route_after_intent(state: JobMarketState) -> str:
     """
-    First routing decision — determines which major path to take based on
-    what the user is trying to do.
+    Routes to the correct pipeline based on the intent set by task_dispatcher.
+    Named route_after_intent for historical compatibility with the path_map in graph.py.
 
     Routes:
-      general_question     -> respond        (LLM answers directly, no tools needed)
-      resume_analysis      -> check_resume   (need to verify a PDF was uploaded first)
-      full_market_analysis -> cache_lookup   (check DB before hitting SerpAPI)
-      focused_question     -> cache_lookup   (same — check DB first)
+      general_question     -> answer_general  (LLM answers directly, no tools needed)
+      resume_analysis      -> check_resume    (verify a PDF was uploaded first)
+      full_market_analysis -> cache_lookup    (check DB before hitting SerpAPI)
+      focused_question     -> cache_lookup    (same — check DB first)
     """
     intent = state.get("intent")
 
     if intent == "general_question":
-        # No market data needed — go straight to the final response node.
-        return "respond"
+        return "answer_general"
 
     if intent == "resume_analysis":
-        # Before doing anything else, verify the user has uploaded a resume.
         return "check_resume"
 
     if intent in ("full_market_analysis", "focused_question"):
-        # Both of these need market data. Check the cache first to avoid
-        # unnecessary SerpAPI calls.
         return "cache_lookup"
 
-    # Unknown or None intent — respond with a fallback message.
-    return "respond"
+    # Unknown or None intent — fall through to answer_general which handles
+    # arbitrary questions gracefully.
+    return "answer_general"
 
 
 # ── After check_resume ────────────────────────────────────────────────────────
@@ -128,9 +125,9 @@ def route_after_confirm_search_params(state: JobMarketState) -> str:
     """
     if state.get("params_confirmed"):
         return "job_collector"
-    # User changed something — feed their new message back through intent_resolver
-    # so it can extract the corrected job titles / country.
-    return "intent_resolver"
+    # User changed something — feed their new message back through planner
+    # so it can re-extract the corrected job titles / country.
+    return "planner"
 
 
 # ── After market_analyzer ─────────────────────────────────────────────────────
@@ -203,3 +200,20 @@ def route_after_resume_parser(state: JobMarketState) -> str:
         # resume_parser set an error message — bail out gracefully.
         return "respond"
     return "cache_lookup"
+
+
+# ── After any task-terminal node ─────────────────────────────────────────────
+
+def route_after_task_complete(state: JobMarketState) -> str:
+    """
+    After a sub-task produces its answer (answer_general, answer_focused, or
+    html_report_generator), decide whether more tasks remain or if we are done.
+
+    Routes:
+      task_queue not empty -> task_dispatcher  (execute next sub-task)
+      task_queue empty     -> respond          (combine all answers and finish)
+    """
+    remaining = state.get("task_queue") or []
+    if remaining:
+        return "task_dispatcher"
+    return "respond"

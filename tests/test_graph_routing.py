@@ -47,8 +47,8 @@ def _state(**kwargs):
 # ── route_after_intent ────────────────────────────────────────────────────────
 
 class TestRouteAfterIntent:
-    def test_general_question_goes_to_respond(self):
-        assert route_after_intent(_state(intent="general_question")) == "respond"
+    def test_general_question_goes_to_answer_general(self):
+        assert route_after_intent(_state(intent="general_question")) == "answer_general"
 
     def test_resume_analysis_goes_to_check_resume(self):
         assert route_after_intent(_state(intent="resume_analysis")) == "check_resume"
@@ -59,8 +59,8 @@ class TestRouteAfterIntent:
     def test_focused_question_goes_to_cache_lookup(self):
         assert route_after_intent(_state(intent="focused_question")) == "cache_lookup"
 
-    def test_unknown_intent_goes_to_respond(self):
-        assert route_after_intent(_state(intent=None)) == "respond"
+    def test_unknown_intent_goes_to_answer_general(self):
+        assert route_after_intent(_state(intent=None)) == "answer_general"
 
 
 # ── route_after_check_resume ──────────────────────────────────────────────────
@@ -100,8 +100,8 @@ class TestRouteAfterConfirmSearchParams:
     def test_confirmed_goes_to_job_collector(self):
         assert route_after_confirm_search_params(_state(params_confirmed=True)) == "job_collector"
 
-    def test_not_confirmed_goes_to_intent_resolver(self):
-        assert route_after_confirm_search_params(_state(params_confirmed=False)) == "intent_resolver"
+    def test_not_confirmed_goes_to_planner(self):
+        assert route_after_confirm_search_params(_state(params_confirmed=False)) == "planner"
 
 
 # ── route_after_market_analyzer ──────────────────────────────────────────────

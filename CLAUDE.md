@@ -2,8 +2,8 @@
 
 ## Project Purpose
 A portfolio-quality agentic AI system for job market analysis and resume gap identification.
-Built with LangGraph to demonstrate: dynamic intent routing, persistent caching, human-in-the-loop (HITL),
-structured LLM outputs, and full-stack deployment.
+Built with LangGraph to demonstrate: multi-task planning, dynamic intent routing, persistent caching,
+human-in-the-loop (HITL), structured LLM outputs, and full-stack deployment.
 
 ## Tech Stack
 - **LangGraph** — stateful graph orchestration (`StateGraph`, `interrupt()`, `AsyncSqliteSaver`)
@@ -24,7 +24,8 @@ graph/
   routing.py            # All conditional edge routing functions (pure functions)
   session_store.py      # In-memory resume store (keyed by session_id)
   nodes/
-    intent_resolver.py  # LLM structured output: classifies into 4 intents
+    planner.py          # LLM structured output: decomposes message into 1–4 tasks
+    task_dispatcher.py  # Pops next task from queue, sets intent/job_titles/country on state
     check_resume.py     # Deterministic: is PDF in session store?
     resume_parser.py    # PDF bytes -> text via pypdf
     cache_lookup.py     # SHA256 key -> SQLite cache check
@@ -33,9 +34,10 @@ graph/
     requirements_extractor.py  # LLM batch extraction per job posting (gpt-4o-mini)
     market_analyzer.py  # LLM aggregation + writes to cache DB (gpt-4o)
     skill_gap_analyzer.py      # Resume vs. market comparison (gpt-4o)
+    answer_general.py   # LLM direct answer for general_question intent (streaming)
     answer_focused.py   # Narrow question answering from market data
     html_report_generator.py   # Full HTML generation + save
-    respond.py          # Final AIMessage composition (history saving currently skipped)
+    respond.py          # Combines accumulated_responses into final reply
 
 api/
   main.py               # FastAPI app: CORS, static report serving, router registration
@@ -65,6 +67,8 @@ tests/
   test_graph_routing.py # 21 pure routing unit tests (no LLM, no DB, no SerpAPI)
 
 run_tests.py            # Non-interactive integration test runner (all 4 intents)
+test_google_jobs_tool.py  # Interactive debug runner for GoogleJobsCollectorTool
+                          # Saves all intermediates to debug_output/ for inspection
 ```
 
 ## The 4 Intents
@@ -74,6 +78,56 @@ run_tests.py            # Non-interactive integration test runner (all 4 intents
 | `focused_question` | Narrow market data question (cloud platforms, DBs, etc.) | confirm_search_params (cache miss only) |
 | `full_market_analysis` | Comprehensive analysis, optional HTML report | confirm_search_params + confirm_report_format |
 | `resume_analysis` | Resume gap vs. market, skill recommendations | confirm_search_params + confirm_report_format |
+
+## Multi-Task Planner (Phase 3 addition)
+The `planner` node replaces the old single-intent `intent_resolver`. It decomposes a user message
+into an ordered list of 1–4 tasks. Each task maps to one of the 4 intents above.
+
+**Single-task queries** behave identically to before — one task in the queue, same execution path.
+
+**Compound queries** execute each task sequentially, collect answers in `accumulated_responses`,
+and combine them in `respond` (one final LLM merge call when multiple answers exist).
+
+Example:
+```
+"What skills do AI engineers need in Germany and explain what LangGraph is?"
+→ planner → task_queue = [
+    {intent: focused_question, job_titles: [AI Engineer], country: Germany},
+    {intent: general_question, query: "explain LangGraph"}
+  ]
+→ task 1 executes full market pipeline (HITL confirm → SerpAPI → extract → analyze → answer_focused)
+→ task 2 executes general LLM call (answer_general)
+→ respond combines both answers
+```
+
+HITL gates are fully preserved — `confirm_search_params` still fires before any SerpAPI call.
+
+**Anti-over-decomposition**: The planner prompt instructs the LLM:
+- "What skills do AI and ML engineers need in Germany?" → 1 task (same market)
+- "Analyse AI in Germany AND Data engineers in France" → 2 tasks (different markets)
+- If in doubt, use 1 task
+
+## Graph Topology
+```
+START → planner → task_dispatcher → [route_after_intent]
+                        ↑                    │
+                        └────────────────────┘
+                     (loop if task_queue not empty)
+
+route_after_intent:
+  general_question     → answer_general  → [route_after_task_complete]
+  resume_analysis      → check_resume    → resume_parser → cache_lookup
+  focused/market       → cache_lookup    → confirm_search_params (HITL)
+                                         → job_collector → requirements_extractor
+                                         → market_analyzer → answer_focused / skill_gap_analyzer
+                                         → confirm_report_format (HITL)
+                                         → html_report_generator / answer_focused
+                                         → [route_after_task_complete]
+
+route_after_task_complete:
+  task_queue not empty → task_dispatcher (loop)
+  task_queue empty     → respond → END
+```
 
 ## API Endpoints (Phase 2)
 
@@ -89,7 +143,7 @@ run_tests.py            # Non-interactive integration test runner (all 4 intents
 | Event | Payload | When |
 |---|---|---|
 | `node_start` | `{"node": "<name>"}` | Each graph node begins |
-| `token` | `{"content": "<text>"}` | LLM streaming token (respond/analyzer/focused nodes only) |
+| `token` | `{"content": "<text>"}` | LLM streaming token (answer_general/respond/analyzer/focused nodes) |
 | `interrupt` | `{"prompt": "...", "session_id": "..."}` | Graph paused at HITL |
 | `done` | `{"session_id", "final_text_response", "html_report_path", "intent", "cache_hit"}` | Graph completed |
 | `error` | `{"detail": "<message>"}` | Unhandled exception |
@@ -112,6 +166,7 @@ is_interrupted = bool(snapshot.next)
 SHA256(sorted(job_titles) + country.lower() + today's date)
 ```
 Same job titles + country + same day = cache hit. Cache TTL = 7 days (configurable via `CACHE_TTL_DAYS`).
+Cache is disabled in dev via `DISABLE_CACHE = True` in `config.py`.
 
 ## Running Tests
 ```bash
@@ -127,6 +182,10 @@ python run_tests.py cache         # Verify cache hit (run after market or focuse
 python run_tests.py resume_missing
 python run_tests.py resume        # Needs Resume.pdf in project root
 python run_tests.py all           # All tests
+
+# Debug GoogleJobsCollectorTool interactively (saves all intermediates to debug_output/)
+python test_google_jobs_tool.py
+python test_google_jobs_tool.py --titles "AI Engineer" --country Germany --limit 5
 ```
 
 ## Environment Variables
@@ -138,7 +197,7 @@ LANGCHAIN_API_KEY=       # LangSmith key (Phase 4)
 LANGCHAIN_PROJECT=       # LangSmith project name
 DATABASE_URL=            # Postgres URI for production; SQLite if blank
 CACHE_TTL_DAYS=7         # Market analysis cache TTL
-DEFAULT_TOTAL_POSTS=30   # Default job postings to collect per run
+DEFAULT_TOTAL_POSTS=5    # Default job postings to collect per run (low for dev; use 30 for prod)
 DB_PATH=job_market.db    # SQLite file path (dev)
 CORS_ORIGINS=*           # Comma-separated allowed origins (default * for local dev; restrict in prod)
 OUTPUTS_DIR=outputs      # Directory where HTML reports are saved and served from
@@ -149,14 +208,19 @@ OUTPUTS_DIR=outputs      # Directory where HTML reports are saved and served fro
 |---|---|---|
 | 1 | **Complete** | Core LangGraph graph + tools, SQLite cache, HITL via terminal |
 | 2 | **Complete** | FastAPI backend, SSE streaming, HITL over HTTP, fly.io deployment |
-| 3 | **In Progress** | GitHub Pages frontend (`personal_website/`), resume upload, inline report viewer |
+| 3 | **Complete** | GitHub Pages frontend, resume upload, multi-task planner, bug fixes |
 | 4 | Pending | LangSmith evaluation, README polish |
 
 ## Key Design Decisions
-- **Lazy tool instantiation** — tools are initialized on first use, not at import time, so the graph can be imported without API keys present
+- **Bounded multi-task planner** — `planner` decomposes messages into 1–4 tasks using only the 4 known intents; it cannot invent new actions, keeping the system predictable and debuggable
+- **task_dispatcher resets per-task state** — clears `raw_job_postings`, `extracted_requirements`, `market_analysis_markdown`, etc. before each task so one task's data never bleeds into the next
+- **Sync nodes throughout** — all graph node functions are synchronous (`def`, not `async def`) using `llm.invoke()`. LangGraph's `astream_events()` still emits token-level streaming events because `streaming=True` on the LLM is handled at the LangChain level. This keeps nodes compatible with both `graph.invoke()` (run_tests.py) and `graph.astream_events()` (FastAPI)
+- **Short job IDs to LLM** — `requirements_extractor` sends `job_1, job_2, ...` instead of the full SerpAPI base64 job_id. The real IDs are very long and caused the LLM to truncate them with `...`, producing invalid JSON that silently dropped all extracted skills
+- **Markdown fence stripping in requirements_extractor** — gpt-4o-mini often wraps JSON in ` ```json ``` ` fences despite instructions not to; the extractor now strips fences before `json.loads()`
+- **Lazy tool instantiation** — tools are initialized on first use, not at import time
 - **Global market cache** — cache is shared across all sessions (market data is not user-specific); only conversation history and resumes are per-session
-- **`total_posts=5` in tests** — keeps API credit usage low during testing; default 30 for real use
 - **`gpt-4o-mini` for classification/extraction** — cheaper; `gpt-4o` only for analysis + HTML generation where quality matters
 - **WAL mode on SQLite** — enabled via `PRAGMA journal_mode=WAL` for better concurrent read performance
 - **AsyncSqliteSaver in API, SqliteSaver in tests** — `api/dependencies.py` uses `AsyncSqliteSaver` (aiosqlite) so `astream_events`/`aget_state` work inside FastAPI's async loop; `run_tests.py` uses the sync `SqliteSaver` via `graph.invoke()`
 - **Conversation history saving skipped in respond.py** — `ConversationSaveTool` opens a sync sqlite3 connection via `asyncio.to_thread()`, which conflicts with `AsyncSqliteSaver`'s aiosqlite connection and causes `aget_state()` to hang; history persistence will be addressed separately
+- **DISABLE_CACHE flag** — set in `config.py`; when `True`, every request runs the full collection pipeline. Useful during debugging

@@ -74,4 +74,16 @@ def html_report_generator(state: JobMarketState) -> dict:
     report_url = saver.run({"html_text": html, "session_id": session_id})
     logger.info("html_report_generator: report saved at %s", report_url)
 
-    return {"html_report_path": report_url}
+    # Build a "report ready" message so respond can include it when combining
+    # multiple task answers.
+    titles_str = ", ".join(job_titles) if job_titles else "the requested roles"
+    report_message = (
+        f"Your HTML report for **{titles_str}** is ready.\n\n"
+        f"[Download / View Report]({report_url})"
+    )
+
+    existing = list(state.get("accumulated_responses") or [])
+    return {
+        "html_report_path": report_url,
+        "accumulated_responses": existing + [report_message],
+    }

@@ -44,7 +44,9 @@ router = APIRouter()
 # Used to filter astream_events so we only emit node_start for actual graph nodes,
 # not internal LangChain chains.
 GRAPH_NODE_NAMES = {
-    "intent_resolver",
+    "planner",
+    "task_dispatcher",
+    "answer_general",
     "check_resume",
     "resume_parser",
     "cache_lookup",
@@ -71,10 +73,11 @@ class ReplyRequest(BaseModel):
 
 
 # Only stream LLM tokens from nodes where the output is the final user-facing
-# text. Structured-output nodes (intent_resolver, requirements_extractor) emit
+# text. Structured-output nodes (planner, requirements_extractor) emit
 # raw JSON tokens that are meaningless to the client.
 _TOKEN_NODES = {
-    "respond",
+    "answer_general",       # general_question LLM call (streaming)
+    "respond",              # combine-multiple-answers LLM call (streaming)
     "market_analyzer",
     "skill_gap_analyzer",
     "answer_focused",
