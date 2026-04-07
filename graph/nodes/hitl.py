@@ -58,7 +58,8 @@ def confirm_search_params(state: JobMarketState) -> dict:
                                     — if user wants to change something
     """
     job_titles = state.get("job_titles") or []
-    country = state.get("country") or "not specified"
+    raw_country = state.get("country")
+    country = raw_country if raw_country and raw_country.lower() != "null" else "not specified"
     total_posts = state.get("total_posts", 30)
 
     # Build a clear, readable confirmation prompt for the user.

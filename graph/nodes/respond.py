@@ -107,9 +107,7 @@ def respond(state: JobMarketState, config: RunnableConfig) -> dict:
         elif html_path:
             titles_str = ", ".join(state.get("job_titles") or [])
             reply = (
-                f"Your report is ready!\n\n"
-                f"[Download / View Report]({html_path})\n\n"
-                f"The report covers:\n"
+                f"Your report is ready! It covers:\n"
                 f"- Market analysis for {titles_str}\n"
                 f"- Top skills, cloud platforms, and certifications\n"
             )

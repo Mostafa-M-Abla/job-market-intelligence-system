@@ -4,6 +4,7 @@ html_report_generator node — generates a full, styled HTML report and saves it
 
 import logging
 import os
+from datetime import date
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -51,10 +52,12 @@ def html_report_generator(state: JobMarketState) -> dict:
 
     context = "\n\n---\n\n".join(content_parts)
 
+    today = date.today().strftime("%B %d, %Y")  # e.g. "April 07, 2026"
     prompt = (
         f"Generate a complete HTML report for:\n"
         f"Job Titles: {', '.join(job_titles)}\n"
-        f"Country: {country}\n\n"
+        f"Country: {country}\n"
+        f"Date: {today}\n\n"
         f"Use this analysis data:\n\n{context}"
     )
 
@@ -77,10 +80,7 @@ def html_report_generator(state: JobMarketState) -> dict:
     # Build a "report ready" message so respond can include it when combining
     # multiple task answers.
     titles_str = ", ".join(job_titles) if job_titles else "the requested roles"
-    report_message = (
-        f"Your HTML report for **{titles_str}** is ready.\n\n"
-        f"[Download / View Report]({report_url})"
-    )
+    report_message = f"Your HTML report for **{titles_str}** is ready."
 
     existing = list(state.get("accumulated_responses") or [])
     return {
