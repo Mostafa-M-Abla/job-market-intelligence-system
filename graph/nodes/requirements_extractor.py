@@ -160,9 +160,13 @@ def requirements_extractor(state: JobMarketState) -> dict:
         # Serialize the batch into a JSON string.
         # We only include the fields the LLM needs — we don't send everything.
         # Descriptions are capped at 3,000 characters to avoid very long inputs.
+        # IMPORTANT: We use short sequential IDs (job_1, job_2, ...) instead of
+        # the real SerpAPI job_id, which is a very long base64 string.  When the
+        # LLM echoes that string back it sometimes truncates it with "...", which
+        # produces invalid JSON and causes the entire batch to be skipped.
         batch_text = json.dumps([
             {
-                "job_id": j.get("job_id", f"job_{i+idx}"),
+                "job_id": f"job_{i + idx + 1}",
                 "title": j.get("title", ""),
                 "company": j.get("company", ""),
                 "description": (j.get("description") or "")[:3000],
@@ -176,18 +180,28 @@ def requirements_extractor(state: JobMarketState) -> dict:
             HumanMessage(content=f"Extract requirements from these job postings:\n\n{batch_text}"),
         ])
 
-        # The LLM is instructed to return a JSON array, but models sometimes
-        # wrap it in {"jobs": [...]} — we handle both formats.
+        # The LLM is instructed to return a JSON array, but models sometimes:
+        #   (a) wrap it in {"jobs": [...]}
+        #   (b) wrap it in markdown code fences: ```json ... ```
+        # We handle all three formats.
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            # Strip the opening fence line (```json or ```) and closing ```
+            lines = raw.split("\n")
+            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+            raw = "\n".join(lines[1:end])
         try:
-            parsed = json.loads(response.content)
+            parsed = json.loads(raw)
             if isinstance(parsed, list):
                 # Standard format: LLM returned a bare JSON array.
                 all_requirements.extend(parsed)
             elif isinstance(parsed, dict) and "jobs" in parsed:
                 # Wrapped format: LLM returned {"jobs": [...]}.
                 all_requirements.extend(parsed["jobs"])
-        except json.JSONDecodeError:
-            logger.warning("requirements_extractor: batch %d returned invalid JSON — skipping", i // batch_size + 1)
+            logger.info("requirements_extractor: batch %d parsed — %d items", i // batch_size + 1, len(parsed) if isinstance(parsed, list) else len(parsed.get("jobs", [])))
+        except json.JSONDecodeError as e:
+            logger.warning("requirements_extractor: batch %d returned invalid JSON — skipping. Error: %s. Raw (first 200): %s",
+                           i // batch_size + 1, e, raw[:200])
 
     logger.info("requirements_extractor: done — %d job requirements extracted", len(all_requirements))
     return {"extracted_requirements": all_requirements}

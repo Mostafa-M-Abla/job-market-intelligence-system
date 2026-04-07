@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # The {placeholders} are filled in at runtime with the actual job titles,
 # country, and post count so the report header is accurate.
 _SYSTEM_PROMPT = """You are a job market analyst.
-
+Still 
 You will receive a JSON array of extracted job requirements (skills, cloud platforms, certifications).
 Aggregate and analyse them to produce a comprehensive market analysis report in Markdown.
 
