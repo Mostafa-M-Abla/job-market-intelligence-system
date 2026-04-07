@@ -25,35 +25,23 @@ OUTPUTS written to state
              list rather than replacing it.
 """
 
+import logging
 import os
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from graph.state import JobMarketState
-from tools.conversation_store import ConversationSaveTool
 
-# Lazy initialisation — ConversationSaveTool connects to the DB.
-_save_tool = None
+logger = logging.getLogger(__name__)
 
 
-def _get_save_tool() -> ConversationSaveTool:
-    """Return the shared ConversationSaveTool instance, creating it on first call."""
-    global _save_tool
-    if _save_tool is None:
-        _save_tool = ConversationSaveTool()
-    return _save_tool
-
-
-def _build_general_answer(state: JobMarketState) -> str:
+async def _build_general_answer(state: JobMarketState) -> str:
     """
     Answer a general question using the LLM's own knowledge (no market data).
 
-    This is only called for the general_question intent — questions like
-    "What is LangGraph?" or "How do I improve my resume?".
-
-    Uses gpt-4o-mini (fast and cheap) with a slightly higher temperature (0.3)
-    to allow for more natural, conversational answers.
+    Uses gpt-4o-mini with streaming=True so tokens are observable by
+    astream_events() and stream through to the frontend in real time.
 
     Args:
         state: Current graph state.  Reads the last human message.
@@ -68,19 +56,22 @@ def _build_general_answer(state: JobMarketState) -> str:
     llm = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0.3,
+        streaming=True,   # enables token-level streaming via astream_events
         api_key=os.getenv("OPENAI_API_KEY"),
     )
-    response = llm.invoke([
+    logger.info("respond: calling LLM for general_question")
+    response = await llm.ainvoke([
         SystemMessage(content=(
             "You are a helpful AI assistant specialising in AI engineering, "
             "machine learning, and career development. Answer clearly and concisely."
         )),
         HumanMessage(content=last_human),
     ])
+    logger.info("respond: LLM call completed")
     return response.content
 
 
-def respond(state: JobMarketState) -> dict:
+async def respond(state: JobMarketState) -> dict:
     """
     Determine the final reply and persist the conversation turn to the DB.
 
@@ -106,12 +97,13 @@ def respond(state: JobMarketState) -> dict:
     """
     intent = state.get("intent")
     session_id = state.get("session_id", "")
+    logger.info("respond: intent=%s session=%s", intent, session_id[:8] if session_id else "?")
 
     # ── Determine the reply content ───────────────────────────────────────────
 
     if intent == "general_question":
         # No market data was needed — answer directly from LLM knowledge.
-        reply = _build_general_answer(state)
+        reply = await _build_general_answer(state)
 
     elif state.get("final_text_response"):
         # This field is set by: answer_focused (text summaries),
@@ -139,33 +131,11 @@ def respond(state: JobMarketState) -> dict:
         # Should not normally be reached — indicates an unexpected graph path.
         reply = "I'm not sure how to respond. Please try rephrasing your question."
 
-    # ── Persist both turns to conversation history ────────────────────────────
-    # We save here (at the very end) so that the history reflects the completed
-    # turn, not a partial one.  In Phase 2 this feeds the GET /api/chat/history
-    # endpoint so users can review past conversations.
-    if session_id:
-        # Save the user's message.
-        last_human = next(
-            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        if last_human:
-            _get_save_tool().run({"session_id": session_id, "role": "human", "content": last_human})
+    # NOTE: Conversation history saving is intentionally skipped here.
+    # ConversationSaveTool opens a synchronous sqlite3 connection via
+    # asyncio.to_thread() which conflicts with AsyncSqliteSaver's aiosqlite
+    # connection, causing aget_state() to hang after the node completes.
+    # History saving will be handled separately (e.g. in a post-processing step).
 
-        # Save the AI's reply with metadata useful for debugging / analytics.
-        _get_save_tool().run({
-            "session_id": session_id,
-            "role": "ai",
-            "content": reply,
-            "metadata": {
-                "intent": intent,
-                "cache_key": state.get("cache_key"),
-                "report_path": state.get("html_report_path"),
-                "cache_hit": state.get("cache_hit", False),
-            },
-        })
-
-    # Append the AIMessage to the conversation history in the graph state.
-    # The add_messages reducer (defined in state.py) ensures this APPENDS
-    # rather than replacing the existing messages list.
+    logger.info("respond: done")
     return {"messages": [AIMessage(content=reply)]}

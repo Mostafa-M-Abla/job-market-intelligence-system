@@ -22,7 +22,9 @@ HITL flow:
   6. Repeat until graph emits `done`.
 """
 
+import asyncio
 import json
+import logging
 import uuid
 from typing import Optional
 
@@ -33,6 +35,8 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from api.dependencies import get_graph
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -101,6 +105,7 @@ async def stream_graph_run(graph, payload, config: dict):
                 step_key = (node_name, meta.get("langgraph_step"))
                 if step_key not in seen_steps:
                     seen_steps.add(step_key)
+                    logger.info("node_start: %s", node_name)
                     yield {
                         "event": "node_start",
                         "data": json.dumps({"node": node_name}),
@@ -115,8 +120,10 @@ async def stream_graph_run(graph, payload, config: dict):
                     }
 
         # Stream exhausted — check whether the graph paused at a HITL interrupt
-        # or completed normally. get_state() is synchronous so use to_thread.
-        snapshot = await graph.aget_state(config)
+        # or completed normally.
+        logger.info("stream: astream_events loop exhausted, calling aget_state")
+        snapshot = await asyncio.wait_for(graph.aget_state(config), timeout=15)
+        logger.info("stream: aget_state done, next=%s", bool(snapshot.next))
 
         if snapshot.next:
             # Graph is paused. Extract the interrupt prompt from the first task.
@@ -142,6 +149,7 @@ async def stream_graph_run(graph, payload, config: dict):
             }
 
     except Exception as e:
+        logger.exception("stream: unhandled exception: %s", e)
         yield {
             "event": "error",
             "data": json.dumps({"detail": str(e)}),
@@ -159,17 +167,12 @@ async def chat(req: ChatRequest, graph=Depends(get_graph)):
     session_id = req.session_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": session_id}}
 
-    # Guard: if this session is already paused at an interrupt, reject the request
-    # so the caller uses /reply instead of starting a new conflicting invocation.
+    # If this session is stuck at a HITL interrupt (e.g. the user left mid-flow
+    # and returned later), start a fresh session rather than blocking the user.
     snapshot = await graph.aget_state(config)
     if snapshot.next:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Session '{session_id}' is paused at a HITL interrupt. "
-                "Use POST /api/chat/{session_id}/reply to resume."
-            ),
-        )
+        session_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": session_id}}
 
     initial_state = {
         "messages": [HumanMessage(content=req.message)],
@@ -180,9 +183,11 @@ async def chat(req: ChatRequest, graph=Depends(get_graph)):
         "cache_hit": False,
     }
 
+    logger.info("chat: starting SSE stream for session %s", session_id[:8])
     return EventSourceResponse(
         stream_graph_run(graph, initial_state, config),
         ping=15,  # keep-alive every 15s; prevents proxy timeouts during long LLM/SerpAPI calls
+        headers={"X-Accel-Buffering": "no"},  # tell proxies (nginx/envoy) not to buffer SSE
     )
 
 
@@ -202,7 +207,9 @@ async def reply(session_id: str, req: ReplyRequest, graph=Depends(get_graph)):
             detail=f"Session '{session_id}' is not paused at an interrupt.",
         )
 
+    logger.info("reply: resuming session %s", session_id[:8])
     return EventSourceResponse(
         stream_graph_run(graph, Command(resume=req.reply), config),
         ping=15,
+        headers={"X-Accel-Buffering": "no"},
     )
