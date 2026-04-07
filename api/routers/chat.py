@@ -29,7 +29,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -137,11 +137,18 @@ async def stream_graph_run(graph, payload, config: dict):
             }
         else:
             state = snapshot.values
+            # For general_question the reply lives in messages, not final_text_response.
+            # Extract the last AI message so the frontend always has a fallback.
+            last_ai = next(
+                (m.content for m in reversed(state.get("messages", []))
+                 if isinstance(m, AIMessage)),
+                None,
+            )
             yield {
                 "event": "done",
                 "data": json.dumps({
                     "session_id": config["configurable"]["thread_id"],
-                    "final_text_response": state.get("final_text_response"),
+                    "final_text_response": state.get("final_text_response") or last_ai,
                     "html_report_path": state.get("html_report_path"),
                     "intent": state.get("intent"),
                     "cache_hit": state.get("cache_hit", False),

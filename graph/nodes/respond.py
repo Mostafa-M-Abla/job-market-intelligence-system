@@ -29,6 +29,7 @@ import logging
 import os
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
 from graph.state import JobMarketState
@@ -36,7 +37,7 @@ from graph.state import JobMarketState
 logger = logging.getLogger(__name__)
 
 
-async def _build_general_answer(state: JobMarketState) -> str:
+async def _build_general_answer(state: JobMarketState, config: RunnableConfig) -> str:
     """
     Answer a general question using the LLM's own knowledge (no market data).
 
@@ -66,12 +67,12 @@ async def _build_general_answer(state: JobMarketState) -> str:
             "machine learning, and career development. Answer clearly and concisely."
         )),
         HumanMessage(content=last_human),
-    ])
+    ], config=config)
     logger.info("respond: LLM call completed")
     return response.content
 
 
-async def respond(state: JobMarketState) -> dict:
+async def respond(state: JobMarketState, config: RunnableConfig) -> dict:
     """
     Determine the final reply and persist the conversation turn to the DB.
 
@@ -103,7 +104,7 @@ async def respond(state: JobMarketState) -> dict:
 
     if intent == "general_question":
         # No market data was needed — answer directly from LLM knowledge.
-        reply = await _build_general_answer(state)
+        reply = await _build_general_answer(state, config)
 
     elif state.get("final_text_response"):
         # This field is set by: answer_focused (text summaries),
