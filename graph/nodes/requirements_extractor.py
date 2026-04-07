@@ -47,6 +47,7 @@ OUTPUTS written to state
 """
 
 import json
+import logging
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -54,6 +55,8 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from graph.state import JobMarketState
+
+logger = logging.getLogger(__name__)
 
 # System prompt that tells the LLM exactly what to extract and how to format it.
 # The model is instructed to:
@@ -132,9 +135,12 @@ def requirements_extractor(state: JobMarketState) -> dict:
     """
     postings = state.get("raw_job_postings") or []
 
-    # Nothing to process — skip the LLM call entirely.
     if not postings:
+        logger.info("requirements_extractor: no postings — skipping extraction")
         return {"extracted_requirements": []}
+
+    num_batches = (len(postings) + 9) // 10
+    logger.info("requirements_extractor: extracting from %d postings (%d batches)", len(postings), num_batches)
 
     # temperature=0 for deterministic, consistent extraction.
     # We want the same job to produce the same skill list every time.
@@ -149,6 +155,7 @@ def requirements_extractor(state: JobMarketState) -> dict:
 
     for i in range(0, len(postings), batch_size):
         batch = postings[i:i + batch_size]
+        logger.info("requirements_extractor: processing batch %d/%d (%d jobs)", i // batch_size + 1, num_batches, len(batch))
 
         # Serialize the batch into a JSON string.
         # We only include the fields the LLM needs — we don't send everything.
@@ -180,9 +187,7 @@ def requirements_extractor(state: JobMarketState) -> dict:
                 # Wrapped format: LLM returned {"jobs": [...]}.
                 all_requirements.extend(parsed["jobs"])
         except json.JSONDecodeError:
-            # The LLM returned something that isn't valid JSON.
-            # Skip this batch rather than crashing the entire pipeline.
-            # market_analyzer will work with whatever batches succeeded.
-            pass
+            logger.warning("requirements_extractor: batch %d returned invalid JSON — skipping", i // batch_size + 1)
 
+    logger.info("requirements_extractor: done — %d job requirements extracted", len(all_requirements))
     return {"extracted_requirements": all_requirements}

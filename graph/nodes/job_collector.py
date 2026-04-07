@@ -17,8 +17,12 @@ OUTPUTS written to state
                      description, job_id, apply_links, etc.
 """
 
+import logging
+
 from graph.state import JobMarketState
 from tools.google_jobs_tool import GoogleJobsCollectorTool
+
+logger = logging.getLogger(__name__)
 
 # Lazy initialisation: the tool requires SERPAPI_API_KEY to be set.
 # Delaying creation until first use means this module can be safely imported
@@ -54,10 +58,12 @@ def job_collector(state: JobMarketState) -> dict:
     country = state.get("country") or ""
     total_posts = state.get("total_posts", 30)
 
+    logger.info("job_collector: fetching up to %d postings for %s in %s", total_posts, job_titles, country)
     postings = _get_tool().run({
         "job_titles": job_titles,
         "country": country,
         "limit": total_posts,
     })
+    logger.info("job_collector: collected %d postings", len(postings))
 
     return {"raw_job_postings": postings}

@@ -24,7 +24,11 @@ it needs to show the user without any further work.
 """
 
 from graph.session_store import has_resume
+import logging
+
 from graph.state import JobMarketState
+
+logger = logging.getLogger(__name__)
 
 
 def check_resume(state: JobMarketState) -> dict:
@@ -47,11 +51,10 @@ def check_resume(state: JobMarketState) -> dict:
     session_id = state.get("session_id", "")
 
     if has_resume(session_id):
-        # Resume is available — clear any stale message and let routing proceed.
+        logger.info("check_resume: resume found for session %s", session_id[:8])
         return {"final_text_response": None}
 
-    # No resume uploaded for this session.
-    # Write a helpful prompt so the respond node can display it to the user.
+    logger.info("check_resume: no resume for session %s — prompting upload", session_id[:8])
     return {
         "final_text_response": (
             "I need your resume to compare it against the job market. "

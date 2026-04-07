@@ -25,8 +25,12 @@ This module contains two HITL nodes:
   - confirm_report_format  : shown after analysis — ask: HTML report or text?
 """
 
+import logging
+
 from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
+
+logger = logging.getLogger(__name__)
 
 from graph.state import JobMarketState
 
@@ -66,19 +70,14 @@ def confirm_search_params(state: JobMarketState) -> dict:
         f"Reply **confirm** to proceed, or tell me what to change."
     )
 
-    # --- GRAPH PAUSES HERE ---
-    # interrupt() serialises the state and pauses execution.
-    # The value returned is whatever the user types in response.
+    logger.info("confirm_search_params: pausing — titles=%s country=%s posts=%d", job_titles, country, total_posts)
     user_reply: str = interrupt(prompt)
-    # --- GRAPH RESUMES HERE when graph.invoke(Command(resume=...), config) is called ---
 
-    # Accept several common confirmation phrases case-insensitively.
     if user_reply.strip().lower() in ("confirm", "yes", "proceed", "ok", "go ahead"):
+        logger.info("confirm_search_params: user confirmed")
         return {"params_confirmed": True}
 
-    # The user wants to change something.
-    # We add their correction as a new HumanMessage so that when the graph
-    # routes back to intent_resolver, it can parse the updated parameters.
+    logger.info("confirm_search_params: user requested change — %r", user_reply[:80])
     return {
         "params_confirmed": False,
         "messages": [HumanMessage(content=user_reply)],
@@ -108,11 +107,9 @@ def confirm_report_format(state: JobMarketState) -> dict:
         "Reply A or B."
     )
 
-    # --- GRAPH PAUSES HERE ---
+    logger.info("confirm_report_format: pausing — awaiting A/B choice from user")
     user_reply: str = interrupt(prompt)
-    # --- GRAPH RESUMES HERE ---
 
-    # Any reply starting with "A" (case-insensitive) means HTML report.
-    # Anything else (B, blank, unclear) defaults to text summary.
     wants_report = user_reply.strip().upper().startswith("A")
+    logger.info("confirm_report_format: user chose %r → report_confirmed=%s", user_reply[:20], wants_report)
     return {"report_confirmed": wants_report}

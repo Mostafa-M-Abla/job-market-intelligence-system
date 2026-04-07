@@ -2,10 +2,13 @@
 html_report_generator node — generates a full, styled HTML report and saves it to disk.
 """
 
+import logging
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
 
 from graph.state import JobMarketState
 from tools.html_report_saver import HTMLReportSaverTool
@@ -31,6 +34,8 @@ def html_report_generator(state: JobMarketState) -> dict:
     job_titles = state.get("job_titles") or []
     country = state.get("country") or ""
     session_id = state.get("session_id", "default")
+    logger.info("html_report_generator: generating HTML report for %s in %s (session %s)",
+                job_titles, country, session_id[:8])
 
     llm = ChatOpenAI(
         model="gpt-4o",
@@ -64,7 +69,9 @@ def html_report_generator(state: JobMarketState) -> dict:
         lines = html.split("\n")
         html = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
+    logger.info("html_report_generator: calling LLM (gpt-4o) to generate HTML")
     saver = HTMLReportSaverTool()
     report_url = saver.run({"html_text": html, "session_id": session_id})
+    logger.info("html_report_generator: report saved at %s", report_url)
 
     return {"html_report_path": report_url}

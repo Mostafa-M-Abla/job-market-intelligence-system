@@ -3,12 +3,15 @@ answer_focused node — answers a narrow, specific question from the market anal
 Used for focused_question intent (and as a fallback when user declines HTML report).
 """
 
+import logging
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from graph.state import JobMarketState
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are a job market intelligence assistant.
 
@@ -29,6 +32,7 @@ def answer_focused(state: JobMarketState) -> dict:
     skill_gap = state.get("skill_gap_markdown") or ""
     focused_topic = state.get("focused_topic") or ""
     intent = state.get("intent") or ""
+    logger.info("answer_focused: generating focused answer (topic=%r, intent=%s)", focused_topic, intent)
 
     # Get the last human message
     from langchain_core.messages import HumanMessage as HM
@@ -60,4 +64,5 @@ def answer_focused(state: JobMarketState) -> dict:
         )),
     ])
 
+    logger.info("answer_focused: done — %d chars", len(response.content))
     return {"final_text_response": response.content}

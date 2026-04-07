@@ -30,6 +30,7 @@ import os
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
+from config import DISABLE_CACHE
 from graph.state import JobMarketState
 from tools.market_cache_tool import MarketCacheWriteTool
 
@@ -89,6 +90,11 @@ def market_analyzer(state: JobMarketState) -> dict:
     # Use the raw postings count as the denominator for percentage calculations.
     total = len(state.get("raw_job_postings") or [])
 
+    logger.info(
+        "market_analyzer: aggregating %d requirements from %d postings for %s in %s",
+        len(requirements), total, job_titles, country,
+    )
+
     # GPT-4o for better quality aggregation (synonym deduplication, accurate counts).
     llm = ChatOpenAI(
         model="gpt-4o",
@@ -103,19 +109,18 @@ def market_analyzer(state: JobMarketState) -> dict:
         total=total,
     )
 
+    logger.info("market_analyzer: calling LLM (gpt-4o) for aggregation")
     response = llm.invoke([
         SystemMessage(content=system),
         HumanMessage(content=f"Here are the extracted requirements:\n\n{json.dumps(requirements, indent=2)}"),
     ])
+    logger.info("market_analyzer: LLM done — %d chars of analysis generated", len(response.content))
 
     analysis_md = response.content
 
-    # Write the complete analysis to the DB cache so future requests with the
-    # same parameters (same titles + country + day) can skip this pipeline.
-    # Skip caching if no postings were collected — an empty result is not
-    # useful and would permanently poison the cache for today's key.
     cache_key = state.get("cache_key")
-    if cache_key and total > 0:
+    if cache_key and total > 0 and not DISABLE_CACHE:
+        logger.info("market_analyzer: writing result to cache (key %s…)", cache_key[:12])
         write_tool = MarketCacheWriteTool()
         write_tool.run({
             "cache_key": cache_key,
@@ -126,5 +131,8 @@ def market_analyzer(state: JobMarketState) -> dict:
             "market_analysis_markdown": analysis_md,
             "total_posts": total,
         })
+
+    elif not (cache_key and total > 0 and not DISABLE_CACHE):
+        logger.info("market_analyzer: skipping cache write (total=%d, disable_cache=%s)", total, DISABLE_CACHE)
 
     return {"market_analysis_markdown": analysis_md}

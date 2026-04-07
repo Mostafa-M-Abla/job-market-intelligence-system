@@ -31,8 +31,13 @@ OUTPUTS written to state
               : populated only on a cache hit
 """
 
+import logging
+
+from config import DISABLE_CACHE
 from graph.state import JobMarketState
 from tools.market_cache_tool import MarketCacheReadTool, build_cache_key
+
+logger = logging.getLogger(__name__)
 
 # Lazy initialisation — the tool is created on first use, not at import time.
 # This means the module can be imported without DB credentials being present.
@@ -69,6 +74,10 @@ def cache_lookup(state: JobMarketState) -> dict:
     job_titles = state.get("job_titles") or []
     country = state.get("country") or ""
 
+    if DISABLE_CACHE:
+        logger.info("cache_lookup: caching disabled — forcing miss")
+        return {"cache_hit": False, "cache_key": None}
+
     if not job_titles or not country:
         # We cannot form a meaningful cache key without both pieces of information.
         # Treat this as a cache miss — the user will be asked to confirm params,
@@ -82,10 +91,13 @@ def cache_lookup(state: JobMarketState) -> dict:
     cached = _get_tool().run({"cache_key": key})
 
     if cached is None:
-        # Cache miss — need to collect fresh data.  Return the key so the
-        # market_analyzer node can write to this exact slot after analysis.
+        logger.info("cache_lookup: MISS for %s in %s (key %s…)", job_titles, country, key[:12])
         return {"cache_hit": False, "cache_key": key}
 
+    logger.info(
+        "cache_lookup: HIT for %s in %s — %d postings cached (key %s…)",
+        job_titles, country, cached.get("total_posts", 0), key[:12],
+    )
     # Cache hit — populate the state with the stored results so all downstream
     # nodes (skill_gap_analyzer, answer_focused, etc.) can use them directly.
     return {

@@ -39,9 +39,13 @@ this module doesn't require pypdf or any API key to be available yet, which
 simplifies testing and startup.
 """
 
+import logging
+
 from graph.session_store import get_resume
 from graph.state import JobMarketState
 from tools.resume_pdf_tool import ResumePDFExtractorTool
+
+logger = logging.getLogger(__name__)
 
 # Module-level singleton — created once, reused for the lifetime of the process.
 # None until first call to _get_tool().
@@ -94,20 +98,15 @@ def resume_parser(state: JobMarketState) -> dict:
     pdf_bytes = get_resume(session_id)
 
     if not pdf_bytes:
-        # This shouldn't normally happen because check_resume runs before this node
-        # and would have redirected the user to upload their resume.  But as a safety
-        # net, we handle it gracefully rather than crashing.
+        logger.warning("resume_parser: no PDF bytes for session %s — sending upload prompt", session_id[:8])
         return {
             "final_text_response": (
                 "Resume not found in session. Please upload your resume PDF first."
             )
         }
 
-    # Run the PDF text extractor.  The tool wraps pypdf's PdfReader, iterates over
-    # every page, and concatenates the text.  The result is a plain string with all
-    # the text from the resume — no formatting, just the words.
+    logger.info("resume_parser: extracting text from PDF (%d bytes, session %s)", len(pdf_bytes), session_id[:8])
     resume_text = _get_tool().run({"pdf_bytes": pdf_bytes})
+    logger.info("resume_parser: extracted %d chars of resume text", len(resume_text))
 
-    # Store the extracted text in state so downstream nodes (skill_gap_analyzer,
-    # html_report_generator) can use it without re-reading the PDF.
     return {"resume_text": resume_text}

@@ -28,6 +28,7 @@ OUTPUTS written to state
   params_confirmed, report_confirmed, cache_hit : reset to False for each new turn
 """
 
+import logging
 import os
 from typing import Optional
 
@@ -37,6 +38,8 @@ from pydantic import BaseModel, Field
 
 from config import DEFAULT_TOTAL_POSTS
 from graph.state import JobMarketState
+
+logger = logging.getLogger(__name__)
 
 # The system prompt tells the LLM exactly how to classify messages and what
 # to extract.  Concrete examples for each intent help the model be consistent.
@@ -133,6 +136,14 @@ def intent_resolver(state: JobMarketState) -> dict:
         SystemMessage(content=_SYSTEM_PROMPT),
         HumanMessage(content=last_human),
     ])
+
+    logger.info(
+        "intent_resolver: intent=%s titles=%s country=%s topic=%s",
+        result.intent,
+        result.job_titles,
+        result.country,
+        result.focused_topic,
+    )
 
     return {
         "intent": result.intent,

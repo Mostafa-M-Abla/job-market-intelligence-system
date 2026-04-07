@@ -41,12 +41,15 @@ OUTPUTS written to state
     - A personalised 2-3 sentence summary
 """
 
+import logging
 import os
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from graph.state import JobMarketState
+
+logger = logging.getLogger(__name__)
 
 # Detailed system prompt defining the output structure.
 # Using a fixed template ensures consistent, comparable output across sessions.
@@ -117,6 +120,8 @@ def skill_gap_analyzer(state: JobMarketState) -> dict:
     # Both inputs are required for a meaningful comparison.
     # If either is missing, return a safe fallback rather than crashing.
     if not resume_text or not market_analysis:
+        logger.warning("skill_gap_analyzer: missing resume_text=%s market_analysis=%s — skipping",
+                       bool(resume_text), bool(market_analysis))
         return {"skill_gap_markdown": "Insufficient data for skill gap analysis."}
 
     # temperature=0 for consistent, reproducible analysis.
@@ -135,10 +140,11 @@ def skill_gap_analyzer(state: JobMarketState) -> dict:
         f"## Market Analysis\n\n{market_analysis}"
     )
 
+    logger.info("skill_gap_analyzer: calling LLM (gpt-4o) — resume %d chars, market analysis %d chars",
+                len(resume_text), len(market_analysis))
     response = llm.invoke([
         SystemMessage(content=_SYSTEM_PROMPT),
         HumanMessage(content=user_content),
     ])
-
-    # Store the Markdown analysis in state for downstream nodes.
+    logger.info("skill_gap_analyzer: done — %d chars of skill gap analysis", len(response.content))
     return {"skill_gap_markdown": response.content}
