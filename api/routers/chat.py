@@ -109,6 +109,7 @@ async def stream_graph_run(graph, payload, config: dict):
                 if step_key not in seen_steps:
                     seen_steps.add(step_key)
                     logger.info("node_start: %s", node_name)
+                    print(f"[node_start] {node_name}", flush=True)
                     yield {
                         "event": "node_start",
                         "data": json.dumps({"node": node_name}),
