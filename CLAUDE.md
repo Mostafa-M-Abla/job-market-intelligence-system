@@ -30,7 +30,7 @@ graph/
     resume_parser.py    # PDF bytes -> text via pypdf
     cache_lookup.py     # SHA256 key -> SQLite cache check
     hitl.py             # HITL interrupt() nodes: confirm_search_params, confirm_report_format
-    job_collector.py    # SerpAPI call via GoogleJobsCollectorTool
+    job_collector.py    # SerpAPI call via GoogleJobsCollectorTool; early-exits with message if 0 results
     requirements_extractor.py  # LLM batch extraction per job posting (gpt-4o-mini)
     market_analyzer.py  # LLM aggregation + writes to cache DB (gpt-4o)
     skill_gap_analyzer.py      # Resume vs. market comparison (gpt-4o)
@@ -64,7 +64,7 @@ personal_website/       # GitHub Pages portfolio site (separate git repo)
   job-market-chat.html  # Live demo chat UI connecting to the fly.io API
 
 tests/
-  test_graph_routing.py # 21 pure routing unit tests (no LLM, no DB, no SerpAPI)
+  test_graph_routing.py # Pure routing unit tests (no LLM, no DB, no SerpAPI)
 
 run_tests.py            # Non-interactive integration test runner (all 4 intents)
 test_google_jobs_tool.py  # Interactive debug runner for GoogleJobsCollectorTool
@@ -118,7 +118,9 @@ route_after_intent:
   general_question     → answer_general  → [route_after_task_complete]
   resume_analysis      → check_resume    → resume_parser → cache_lookup
   focused/market       → cache_lookup    → confirm_search_params (HITL)
-                                         → job_collector → requirements_extractor
+                                         → job_collector → [route_after_job_collector]
+                                             ├─ 0 results → respond (or task_dispatcher if more tasks)
+                                             └─ results   → requirements_extractor
                                          → market_analyzer → answer_focused / skill_gap_analyzer
                                          → confirm_report_format (HITL)
                                          → html_report_generator / answer_focused
@@ -143,6 +145,7 @@ route_after_task_complete:
 | Event | Payload | When |
 |---|---|---|
 | `node_start` | `{"node": "<name>"}` | Each graph node begins |
+| `intent_selected` | `{"intent": "<intent>"}` | After task_dispatcher completes; used to highlight the chosen intent node in the frontend diagram |
 | `token` | `{"content": "<text>"}` | LLM streaming token (answer_general/respond/analyzer/focused nodes) |
 | `interrupt` | `{"prompt": "...", "session_id": "..."}` | Graph paused at HITL |
 | `done` | `{"session_id", "final_text_response", "html_report_path", "intent", "cache_hit"}` | Graph completed |
@@ -160,6 +163,12 @@ graph.invoke(Command(resume=user_reply), config)
 snapshot = graph.get_state(config)
 is_interrupted = bool(snapshot.next)
 ```
+
+### HITL Frontend UI (job-market-chat.html)
+The `showInterrupt(prompt)` function detects which UI to render based on the prompt text:
+- `prompt.includes('**confirm**')` → shows green "Confirm" button + text input for corrections (`#hitl-confirm-wrap`)
+- `prompt.includes('Reply A or B')` → shows A/B buttons for report format choice (`#hitl-ab-wrap`)
+- Otherwise → shows plain text input (`#hitl-text-wrap`)
 
 ## Cache Key
 ```python
@@ -203,12 +212,52 @@ CORS_ORIGINS=*           # Comma-separated allowed origins (default * for local 
 OUTPUTS_DIR=outputs      # Directory where HTML reports are saved and served from
 ```
 
+## Frontend (personal_website/job-market-chat.html)
+
+### Page Layout (top to bottom)
+1. Navbar
+2. Header card — title, description, feature badges (4 Intents / HITL / Real-time Streaming)
+3. Chat panel — messages, status bar, HITL card, input
+4. Architecture diagram — LangGraph SVG visualisation
+5. Back to Projects button
+6. Footer
+
+### Status Bar
+Sits between the messages area and the input section. Shows the currently executing pipeline step
+as `"Step N: <label>..."`. A `▾` button expands a history list of completed steps (with `✓` marks).
+- Cleared (hidden text) when a new message is sent (`resetPipeline()`)
+- Updated on each `node_start` SSE event
+- Spinner dims on `interrupt` (pipeline waiting for user)
+- Clears on `done` or `error`
+
+### SSE Parsing — Important
+sse-starlette sends events with `\r\n` line endings and `\r\n\r\n` event separators.
+The frontend splits on `/\r?\n\r?\n/` (not `'\n\n'`) to correctly parse individual events.
+Using `'\n\n'` causes all events in a TCP chunk to merge into one, with only the last
+`event:` / `data:` pair surviving.
+
+### Streaming Markdown
+Tokens are rendered through `marked.parse()` on every `token` event (`innerHTML = renderMd(raw)`),
+not appended as plain text. This prevents raw markdown syntax from being visible during streaming.
+
+### Architecture Diagram
+SVG LangGraph visualisation with live node highlighting as a query runs:
+- Processing nodes: blue when active, green when done
+- Intent nodes (`gnode-intent`): purple by default, green when active/done
+- HITL nodes: amber
+- The chosen intent node is highlighted via the `intent_selected` SSE event (emitted by the
+  backend on `task_dispatcher` `on_chain_end`); `general_question` uses the `answer_general`
+  node directly (no separate label node needed)
+- To change `total_posts` sent by the frontend: edit `total_posts: 5` in the `fetch` call
+  inside `handleSend()` in `job-market-chat.html`
+
 ## Implementation Phases
 | Phase | Status | Description |
 |---|---|---|
 | 1 | **Complete** | Core LangGraph graph + tools, SQLite cache, HITL via terminal |
 | 2 | **Complete** | FastAPI backend, SSE streaming, HITL over HTTP, fly.io deployment |
 | 3 | **Complete** | GitHub Pages frontend, resume upload, multi-task planner, bug fixes |
+| 3.5 | **Complete** | Frontend UX polish: step indicator, streaming markdown, 0-results handling, intent highlighting |
 | 4 | Pending | LangSmith evaluation, README polish |
 
 ## Key Design Decisions
@@ -224,3 +273,5 @@ OUTPUTS_DIR=outputs      # Directory where HTML reports are saved and served fro
 - **AsyncSqliteSaver in API, SqliteSaver in tests** — `api/dependencies.py` uses `AsyncSqliteSaver` (aiosqlite) so `astream_events`/`aget_state` work inside FastAPI's async loop; `run_tests.py` uses the sync `SqliteSaver` via `graph.invoke()`
 - **Conversation history saving skipped in respond.py** — `ConversationSaveTool` opens a sync sqlite3 connection via `asyncio.to_thread()`, which conflicts with `AsyncSqliteSaver`'s aiosqlite connection and causes `aget_state()` to hang; history persistence will be addressed separately
 - **DISABLE_CACHE flag** — set in `config.py`; when `True`, every request runs the full collection pipeline. Useful during debugging
+- **0-results short-circuit** — `job_collector` returns early with a user-facing message if SerpAPI finds no postings; `route_after_job_collector` skips the analysis pipeline and routes directly to `respond` (or `task_dispatcher` if more tasks remain)
+- **intent_selected SSE event** — emitted on `task_dispatcher` `on_chain_end` (not `on_chain_start`) because the intent is only set in the node's output, not its input; the frontend uses this to highlight the correct intent label node in the architecture diagram

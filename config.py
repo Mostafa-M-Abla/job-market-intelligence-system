@@ -10,7 +10,7 @@ CACHE_TTL_DAYS: int = 7
 
 # Default number of job postings to collect per SerpAPI run when the caller
 # does not specify a value. Kept low in tests (total_posts=5) to save credits.
-DEFAULT_TOTAL_POSTS: int = 5
+DEFAULT_TOTAL_POSTS: int = 3
 
 # Set to True to bypass the market analysis cache entirely — every request will
 # run the full collection pipeline (SerpAPI + LLM extraction + analysis) and
