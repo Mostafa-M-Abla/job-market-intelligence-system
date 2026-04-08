@@ -68,7 +68,7 @@ def confirm_search_params(state: JobMarketState) -> dict:
         f"  Job titles : {', '.join(job_titles) if job_titles else 'not specified'}\n"
         f"  Country    : {country}\n"
         f"  Posts      : {total_posts}\n\n"
-        f"Reply **confirm** to proceed, or tell me what to change."
+        f" press **confirm** to proceed, or tell me what to change."
     )
 
     logger.info("confirm_search_params: pausing — titles=%s country=%s posts=%d", job_titles, country, total_posts)
