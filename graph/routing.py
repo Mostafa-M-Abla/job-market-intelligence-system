@@ -130,6 +130,26 @@ def route_after_confirm_search_params(state: JobMarketState) -> str:
     return "planner"
 
 
+# ── After job_collector ───────────────────────────────────────────────────────
+
+def route_after_job_collector(state: JobMarketState) -> str:
+    """
+    After job_collector, skip the analysis pipeline if no postings were found.
+
+    Routes:
+      postings found -> requirements_extractor  (continue normal pipeline)
+      no postings    -> task_dispatcher or respond  (surface "no results" message)
+    """
+    if state.get("raw_job_postings"):
+        return "requirements_extractor"
+    # No postings — accumulated_responses already has the "no results" message.
+    # Reuse the same loop-or-finish logic as other terminal nodes.
+    remaining = state.get("task_queue") or []
+    if remaining:
+        return "task_dispatcher"
+    return "respond"
+
+
 # ── After market_analyzer ─────────────────────────────────────────────────────
 
 def route_after_market_analyzer(state: JobMarketState) -> str:

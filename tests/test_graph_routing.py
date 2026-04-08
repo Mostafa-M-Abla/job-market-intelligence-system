@@ -11,6 +11,7 @@ from graph.routing import (
     route_after_confirm_report_format,
     route_after_confirm_search_params,
     route_after_intent,
+    route_after_job_collector,
     route_after_market_analyzer,
     route_after_resume_parser,
     route_after_skill_gap,
@@ -30,6 +31,8 @@ def _state(**kwargs):
         "params_confirmed": False,
         "report_confirmed": False,
         "raw_job_postings": None,
+        "task_queue": [],
+        "accumulated_responses": [],
         "extracted_requirements": None,
         "market_analysis_markdown": None,
         "resume_text": None,
@@ -102,6 +105,26 @@ class TestRouteAfterConfirmSearchParams:
 
     def test_not_confirmed_goes_to_planner(self):
         assert route_after_confirm_search_params(_state(params_confirmed=False)) == "planner"
+
+
+# ── route_after_job_collector ────────────────────────────────────────────────
+
+class TestRouteAfterJobCollector:
+    def test_postings_found_goes_to_requirements_extractor(self):
+        state = _state(raw_job_postings=[{"title": "AI Engineer"}])
+        assert route_after_job_collector(state) == "requirements_extractor"
+
+    def test_no_postings_last_task_goes_to_respond(self):
+        state = _state(raw_job_postings=[], task_queue=[])
+        assert route_after_job_collector(state) == "respond"
+
+    def test_no_postings_more_tasks_goes_to_task_dispatcher(self):
+        state = _state(raw_job_postings=[], task_queue=[{"intent": "general_question"}])
+        assert route_after_job_collector(state) == "task_dispatcher"
+
+    def test_none_postings_treated_as_empty(self):
+        state = _state(raw_job_postings=None, task_queue=[])
+        assert route_after_job_collector(state) == "respond"
 
 
 # ── route_after_market_analyzer ──────────────────────────────────────────────

@@ -66,4 +66,20 @@ def job_collector(state: JobMarketState) -> dict:
     })
     logger.info("job_collector: collected %d postings", len(postings))
 
+    if not postings:
+        titles_str = ", ".join(job_titles) if job_titles else "the requested roles"
+        country_str = f" in {country}" if country else ""
+        no_results_msg = (
+            f"No job postings were found for **{titles_str}**{country_str}.\n\n"
+            f"This can happen when the search parameters are very specific or "
+            f"listings aren't currently available for this combination. "
+            f"Please try again with different job titles, a different country, "
+            f"or a broader search term."
+        )
+        existing = list(state.get("accumulated_responses") or [])
+        return {
+            "raw_job_postings": [],
+            "accumulated_responses": existing + [no_results_msg],
+        }
+
     return {"raw_job_postings": postings}

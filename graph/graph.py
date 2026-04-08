@@ -67,6 +67,7 @@ from graph.routing import (
     route_after_confirm_report_format,
     route_after_confirm_search_params,
     route_after_intent,
+    route_after_job_collector,
     route_after_market_analyzer,
     route_after_resume_parser,
     route_after_skill_gap,
@@ -163,8 +164,16 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # ── Sequential job collection pipeline (no branching) ────────────────────
-    builder.add_edge("job_collector", "requirements_extractor")
+    # ── After job collection: skip pipeline if no postings were found ─────────
+    builder.add_conditional_edges(
+        "job_collector",
+        route_after_job_collector,
+        {
+            "requirements_extractor": "requirements_extractor",
+            "task_dispatcher": "task_dispatcher",
+            "respond": "respond",
+        },
+    )
     builder.add_edge("requirements_extractor", "market_analyzer")
 
     # ── After market analysis: fan out by intent ──────────────────────────────
