@@ -115,6 +115,16 @@ async def stream_graph_run(graph, payload, config: dict):
                         "data": json.dumps({"node": node_name}),
                     }
 
+            elif kind == "on_chain_end" and node_name == "task_dispatcher":
+                output = event.get("data", {}).get("output", {})
+                if isinstance(output, dict):
+                    intent = output.get("intent")
+                    if intent:
+                        yield {
+                            "event": "intent_selected",
+                            "data": json.dumps({"intent": intent}),
+                        }
+
             elif kind == "on_chat_model_stream" and node_name in _TOKEN_NODES:
                 chunk = event["data"].get("chunk")
                 if chunk and chunk.content:
