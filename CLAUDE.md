@@ -66,6 +66,17 @@ personal_website/       # GitHub Pages portfolio site (separate git repo)
 tests/
   test_graph_routing.py # Pure routing unit tests (no LLM, no DB, no SerpAPI)
 
+evaluation/
+  eval_final_answer.py  # Eval 1: end-to-end answer quality (LLM-as-a-judge, 5 questions)
+  eval_planner.py       # Eval 2: planner node isolation (8 examples, zero SerpAPI)
+  eval_trajectory.py    # Eval 3: node sequence verification (3 questions)
+  run_all.py            # Runs all 3 evals in sequence (cheapest first)
+  evaluate_html_report.py  # Legacy: single HTML report quality check (@traceable)
+  shared/
+    graph_runner.py     # HITL-aware graph runner + trajectory capture
+    dataset_utils.py    # Idempotent LangSmith dataset create/upsert
+    llm_judge.py        # LLM-as-a-judge evaluators (relevance/correctness/completeness)
+
 run_tests.py            # Non-interactive integration test runner (all 4 intents)
 test_google_jobs_tool.py  # Interactive debug runner for GoogleJobsCollectorTool
                           # Saves all intermediates to debug_output/ for inspection
@@ -197,13 +208,60 @@ python test_google_jobs_tool.py
 python test_google_jobs_tool.py --titles "AI Engineer" --country Germany --limit 5
 ```
 
+## LangSmith Evaluations (Phase 4)
+
+Three evaluation types, all stored as datasets in LangSmith and viewable in the UI.
+
+```bash
+# Run all 3 evals (cheapest first — fails fast if planner is broken)
+python evaluation/run_all.py
+
+# Run individually
+python evaluation/eval_planner.py       # Eval 2: planner node, OpenAI only, fastest
+python evaluation/eval_trajectory.py    # Eval 3: node sequence, 1 example needs SerpAPI
+python evaluation/eval_final_answer.py  # Eval 1: answer quality, 2 examples need SerpAPI
+```
+
+Requires `LANGSMITH_API_KEY` in `.env` with write access to the `job-market-intelligence-system` project.
+
+### Eval 1 — Final Answer Quality (`eval-final-answer-v1`, 5 examples)
+Runs the full graph end-to-end. LLM-as-a-judge (gpt-4o-mini) scores each response on:
+- `relevance` — does the answer address the question?
+- `correctness` — are facts and claims accurate?
+- `completeness` — does it cover all key aspects?
+
+3 `general_question` examples (no SerpAPI), 2 `focused_question` (SerpAPI + auto-HITL).
+
+### Eval 2 — Planner Node Isolation (`eval-planner-v1`, 8 examples)
+Calls `planner(state)` directly — no graph, no SerpAPI, no DB. Deterministic evaluators:
+- `task_count_correct` — exact match on number of tasks produced
+- `intent_correct` — all tasks have the correct intent (order-insensitive)
+- `no_over_decomposition` — single-market queries must produce exactly 1 task
+- `job_titles_extracted` — job titles present when expected
+- `country_extracted` — country field correctly identified
+
+Covers all 4 intents, anti-over-decomposition cases, and multi-task queries (2 distinct markets, general+focused).
+
+### Eval 3 — Trajectory (`eval-trajectory-v1`, 3 examples)
+Captures node execution order via `graph.stream(stream_mode="updates")`. Evaluators:
+- `trajectory_exact_match` — full sequence must match exactly (1.0 or 0.0)
+- `trajectory_prefix_match` — greedy subsequence score (partial credit)
+
+3 trajectories: simple `general_question` (4 nodes), `focused_question` with HITL (9 nodes), compound `general+general` with task loop (6 nodes, `task_dispatcher` fires twice).
+
+**HITL in evals:** All interrupts are auto-confirmed — `confirm_search_params` → replies `"confirm"`, `confirm_report_format` → replies `"B"` (text summary, avoids file generation). Each eval example uses an isolated in-memory SQLite checkpointer to prevent state bleed.
+
+**Trajectory + HITL note:** `confirm_search_params` executes fully before `interrupt()` pauses the stream, so it appears in the trajectory from the first `graph.stream()` call. Post-resume nodes (`job_collector` onward) appear in the second call.
+
 ## Environment Variables
 ```
 OPENAI_API_KEY=          # Required
 SERPAPI_API_KEY=         # Required for market data tests
-LANGCHAIN_TRACING_V2=    # true/false — LangSmith tracing (Phase 4)
-LANGCHAIN_API_KEY=       # LangSmith key (Phase 4)
-LANGCHAIN_PROJECT=       # LangSmith project name
+LANGSMITH_API_KEY=       # Required for LangSmith evaluations (Phase 4)
+LANGSMITH_PROJECT=       # LangSmith project name (default: job-market-intelligence-system)
+LANGSMITH_TRACING=       # true/false — enable LangSmith tracing
+LANGCHAIN_TRACING_V2=    # true/false — legacy tracing flag (keep false if using LANGSMITH_TRACING)
+LANGCHAIN_PROJECT=       # LangSmith project name (legacy alias)
 DATABASE_URL=            # Postgres URI for production; SQLite if blank
 CACHE_TTL_DAYS=7         # Market analysis cache TTL
 DEFAULT_TOTAL_POSTS=5    # Default job postings to collect per run (low for dev; use 30 for prod)
@@ -258,7 +316,7 @@ SVG LangGraph visualisation with live node highlighting as a query runs:
 | 2 | **Complete** | FastAPI backend, SSE streaming, HITL over HTTP, fly.io deployment |
 | 3 | **Complete** | GitHub Pages frontend, resume upload, multi-task planner, bug fixes |
 | 3.5 | **Complete** | Frontend UX polish: step indicator, streaming markdown, 0-results handling, intent highlighting |
-| 4 | Pending | LangSmith evaluation, README polish |
+| 4 | **Complete** | LangSmith evaluation suite: final answer quality, planner node isolation, trajectory verification |
 
 ## Key Design Decisions
 - **Bounded multi-task planner** — `planner` decomposes messages into 1–4 tasks using only the 4 known intents; it cannot invent new actions, keeping the system predictable and debuggable
