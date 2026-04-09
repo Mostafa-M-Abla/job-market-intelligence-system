@@ -51,7 +51,7 @@ Before any expensive job search, the system pauses and asks you to confirm the p
 └──────┬─────────────────────────────────────┬────────────────────┘
        │                                     │
 ┌──────▼──────────────┐           ┌──────────▼──────────┐
-│  SQLite / Postgres  │           │    OpenAI API        │
+│  SQLite             │           │    OpenAI API        │
 │                     │           │  gpt-4o-mini         │
 │  · market cache     │           │  · planning          │
 │  · LG checkpoints   │           │  · extraction        │
@@ -84,7 +84,7 @@ flowchart TD
     subgraph intent_routing ["Route by intent"]
         answer_general("💬 answer_general\ngpt-4o-mini\ngeneral knowledge Q&A"):::llm
         check_resume("📎 check_resume\nresume uploaded?"):::logic
-        cache_lookup("🗄️ cache_lookup\nSHA256 key → SQLite / Postgres"):::logic
+        cache_lookup("🗄️ cache_lookup\nSHA256 key → SQLite"):::logic
     end
 
     resume_parser("📄 resume_parser\npypdf → plain text"):::tool
@@ -161,7 +161,7 @@ flowchart TD
 | `answer_general` | LLM | gpt-4o-mini | Answers general knowledge questions directly from AI knowledge. No tools, no job data. Supports token-level streaming. |
 | `check_resume` | Logic | — | Checks the in-memory session store for an uploaded resume PDF. Routes to `resume_parser` if found, or surfaces an upload prompt if not. |
 | `resume_parser` | Tool | pypdf | Extracts plain text from the uploaded PDF bytes. Handles encoding errors gracefully. |
-| `cache_lookup` | DB | — | Computes `SHA256(sorted_titles + country + date)` and checks the SQLite/Postgres cache. Returns the stored analysis on a hit; proceeds to HITL on a miss. |
+| `cache_lookup` | DB | — | Computes `SHA256(sorted_titles + country + date)` and checks the SQLite cache. Returns the stored analysis on a hit; proceeds to HITL on a miss. |
 | `confirm_search_params` | **HITL** | — | Calls LangGraph's `interrupt()` — serialises state to the checkpointer, surfaces the proposed search parameters to the user, and waits for confirmation before spending SerpAPI credits. |
 | `job_collector` | Tool | SerpAPI | Collects N real job postings from Google Jobs via SerpAPI. Uses `tenacity` for exponential backoff on rate limits. Early-exits with a message if 0 results are found. |
 | `requirements_extractor` | LLM | gpt-4o-mini | Sends all job postings to the LLM in one batch. Extracts structured skills, cloud platforms, tools, and certifications per posting as JSON. Strips markdown fences before parsing. |
@@ -218,7 +218,7 @@ User replies:
 ```
 
 **How it works technically:**
-1. `interrupt(prompt)` serialises the complete graph state to SQLite/Postgres via the checkpointer and raises an internal exception that exits the graph cleanly
+1. `interrupt(prompt)` serialises the complete graph state to SQLite via the checkpointer and raises an internal exception that exits the graph cleanly
 2. The API layer detects the pause with `graph.get_state(config)` and emits an `interrupt` SSE event to the frontend
 3. The frontend renders the appropriate UI (confirm button or A/B choice)
 4. The user's reply is sent to `POST /api/chat/{id}/reply`, which calls `graph.invoke(Command(resume=reply), config)` to resume from the exact checkpoint
@@ -362,8 +362,7 @@ Captures the ordered list of node names that fire during graph execution using `
 | Job data | **SerpAPI Google Jobs** | Real-time job posting collection |
 | PDF parsing | **pypdf** | Resume text extraction from uploaded bytes |
 | Backend API | **FastAPI + sse-starlette** | SSE streaming, HITL resume, resume upload |
-| Database (dev) | **SQLite + aiosqlite** | Market cache, LangGraph checkpoints |
-| Database (prod) | **PostgreSQL** | Production-grade persistence on fly.io |
+| Database | **SQLite + aiosqlite** | Market cache, LangGraph checkpoints |
 | Frontend | **Vanilla JS + GitHub Pages** | Chat UI, live diagram highlighting, HITL forms |
 | Evaluation | **LangSmith** | Datasets, experiment tracking, LLM-as-a-judge |
 | Retries | **tenacity** | Exponential backoff on SerpAPI rate limits |
@@ -476,8 +475,6 @@ LANGSMITH_API_KEY=lsv2_pt_...
 LANGSMITH_PROJECT=job-market-intelligence-system
 LANGSMITH_TRACING=true
 
-# Database (leave blank to use SQLite)
-DATABASE_URL=
 DB_PATH=job_market.db
 
 # Tuning

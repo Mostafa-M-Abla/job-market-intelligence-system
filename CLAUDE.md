@@ -10,7 +10,7 @@ human-in-the-loop (HITL), structured LLM outputs, and full-stack deployment.
 - **LangChain / langchain-openai** — LLM abstractions, tool base classes
 - **OpenAI** — `gpt-4o-mini` for classification/extraction, `gpt-4o` for analysis/generation
 - **SerpAPI** — Google Jobs data collection
-- **SQLite** (dev) / **PostgreSQL** (prod) — market analysis cache + conversation history
+- **SQLite** — market analysis cache + conversation history
 - **FastAPI** — backend API with SSE streaming; deployed to fly.io
 - **sse-starlette** — Server-Sent Events support for FastAPI
 - **aiosqlite** — async SQLite driver for `AsyncSqliteSaver` in the API layer
@@ -262,7 +262,6 @@ LANGSMITH_PROJECT=       # LangSmith project name (default: job-market-intellige
 LANGSMITH_TRACING=       # true/false — enable LangSmith tracing
 LANGCHAIN_TRACING_V2=    # true/false — legacy tracing flag (keep false if using LANGSMITH_TRACING)
 LANGCHAIN_PROJECT=       # LangSmith project name (legacy alias)
-DATABASE_URL=            # Postgres URI for production; SQLite if blank
 CACHE_TTL_DAYS=7         # Market analysis cache TTL
 DEFAULT_TOTAL_POSTS=5    # Default job postings to collect per run (low for dev; use 30 for prod)
 DB_PATH=job_market.db    # SQLite file path (dev)
